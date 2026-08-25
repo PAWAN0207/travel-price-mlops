@@ -1,0 +1,26 @@
+﻿# Environment / secrets
+.env
+*.env
+jenkins-kubeconfig
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+# Jupyter
+.ipynb_checkpoints/
+# MLflow
+mlruns/
+mlflow.db
+# Airflow
+airflow/logs/
+airflow/__pycache__/
+# Local backups
+airflow-compose.backup.yml
+# IDE
+.vscode/
+# OS
+.DS_Store
+Thumbs.db
+*.tar

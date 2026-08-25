@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: travel-price-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: travel-price-api
+  template:
+    metadata:
+      labels:
+        app: travel-price-api
+    spec:
+      containers:
+        - name: travel-price-api
+          image: travel-price-api:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 5000
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
