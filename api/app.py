@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+﻿from flask import Flask, request, jsonify
 import joblib
 import pandas as pd
 import os
@@ -46,11 +46,7 @@ def predict():
             "flightType",
             "time",
             "distance",
-            "agency",
-            "year",
-            "month",
-            "day",
-            "day_of_week"
+            "agency"
         ]
 
         # Check whether all required inputs are provided
@@ -91,3 +87,5 @@ if __name__ == "__main__":
         port=5000,
         debug=True
     )
+
+
