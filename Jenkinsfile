@@ -9,16 +9,30 @@
             }
         }
 
+        stage("Setup Python") {
+            steps {
+                sh '''
+                    python3 -m venv .venv
+                    .venv/bin/python --version
+                    .venv/bin/pip --version
+                '''
+            }
+        }
+
         stage("Install Dependencies") {
             steps {
-                sh "python --version"
-                sh "pip install --no-cache-dir -r requirements.txt"
+                sh '''
+                    .venv/bin/pip install --upgrade pip
+                    .venv/bin/pip install --no-cache-dir -r requirements.txt
+                '''
             }
         }
 
         stage("Run API Tests") {
             steps {
-                sh "pytest -v tests/test_api.py"
+                sh '''
+                    .venv/bin/pytest -v tests/test_api.py
+                '''
             }
         }
     }
