@@ -74,6 +74,7 @@ pipeline {
         stage("Build Docker Image") {
             steps {
                 sh '''
+                    echo "Building Docker image..."
                     docker build -t travel-price-api:ci .
                 '''
             }
@@ -86,13 +87,13 @@ pipeline {
 
                     docker run -d \
                         --name travel-price-api-ci \
-                        -p 5001:5000 \
+                        -p 5003:5000 \
                         travel-price-api:ci
 
                     echo "Waiting for Docker API..."
 
                     for i in 1 2 3 4 5 6 7 8 9 10; do
-                        if curl -s http://127.0.0.1:5001/health > /dev/null; then
+                        if curl -s http://127.0.0.1:5003/health > /dev/null; then
                             echo "Docker API started successfully!"
                             break
                         fi
@@ -100,6 +101,8 @@ pipeline {
                         echo "Waiting... ($i/10)"
                         sleep 2
                     done
+
+                    curl -f http://127.0.0.1:5003/health
                 '''
             }
         }
@@ -108,7 +111,8 @@ pipeline {
             steps {
                 sh '''
                     echo "Testing Docker health endpoint..."
-                    curl -f http://127.0.0.1:5001/health
+
+                    curl -f http://127.0.0.1:5003/health
 
                     echo ""
                     echo "Testing Docker prediction endpoint..."
@@ -122,9 +126,13 @@ pipeline {
                             "flightType": "firstClass",
                             "time": 1.76,
                             "distance": 676.53,
-                            "agency": "FlyingDrops"
+                            "agency": "FlyingDrops",
+                            "year": 2026,
+                            "month": 8,
+                            "day": 28,
+                            "day_of_week": 5
                         }' \
-                        http://127.0.0.1:5001/predict
+                        http://127.0.0.1:5003/predict
 
                     echo ""
                     echo "Docker API tests passed!"
@@ -134,6 +142,7 @@ pipeline {
     }
 
     post {
+
         always {
             sh '''
                 if [ -f api.pid ]; then
@@ -151,11 +160,13 @@ pipeline {
         failure {
             echo "CI/CD Pipeline failed."
 
-            if [ -f api.log ]; then
-                echo "========== API LOG =========="
-                cat api.log
-                echo "============================="
-            fi
+            sh '''
+                if [ -f api.log ]; then
+                    echo "========== API LOG =========="
+                    cat api.log
+                    echo "============================="
+                fi
+            '''
         }
     }
 }
