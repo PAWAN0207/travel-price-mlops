@@ -4,6 +4,7 @@ pipeline {
     environment {
         IMAGE_NAME = "travel-price-api:ci"
         CONTAINER_NAME = "travel-price-api-ci"
+        NETWORK_NAME = "jenkins-ci-network"
     }
 
     stages {
@@ -17,7 +18,9 @@ pipeline {
         stage("Setup Python") {
             steps {
                 sh '''
-                    echo "Setting up Python virtual environment..."
+                    echo "========================================="
+                    echo "Setting up Python environment"
+                    echo "========================================="
 
                     rm -rf .venv
 
@@ -45,7 +48,9 @@ pipeline {
         stage("Start API") {
             steps {
                 sh '''
-                    echo "Starting Flask API..."
+                    echo "========================================="
+                    echo "Starting Local Flask API"
+                    echo "========================================="
 
                     rm -f api.pid api.log
 
@@ -53,19 +58,18 @@ pipeline {
                     echo $! > api.pid
 
                     echo "API PID: $(cat api.pid)"
-                    echo "Waiting for API..."
 
                     API_READY=false
 
                     for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
 
                         if curl -fsS http://127.0.0.1:5000/health > /dev/null 2>&1; then
-                            echo "API started successfully!"
+                            echo "Local API started successfully!"
                             API_READY=true
                             break
                         fi
 
-                        echo "Waiting... ($i/15)"
+                        echo "Waiting for Local API... ($i/15)"
                         sleep 2
                     done
 
@@ -79,8 +83,6 @@ pipeline {
                         exit 1
                     fi
 
-                    echo "Final API health check..."
-
                     curl -fsS http://127.0.0.1:5000/health
 
                     echo ""
@@ -92,7 +94,9 @@ pipeline {
         stage("Run API Tests") {
             steps {
                 sh '''
-                    echo "Running API tests..."
+                    echo "========================================="
+                    echo "Running API Tests"
+                    echo "========================================="
 
                     .venv/bin/pytest -v tests/test_api.py
 
@@ -104,7 +108,7 @@ pipeline {
         stage("Stop Local API") {
             steps {
                 sh '''
-                    echo "Stopping local Flask API..."
+                    echo "Stopping Local Flask API..."
 
                     if [ -f api.pid ]; then
                         PID=$(cat api.pid)
@@ -126,15 +130,30 @@ pipeline {
             steps {
                 sh '''
                     echo "========================================="
-                    echo "Building Docker image..."
+                    echo "Building Docker Image"
                     echo "========================================="
 
                     docker build --pull=false -t travel-price-api:ci .
 
                     echo ""
-                    echo "Docker image built successfully!"
+                    echo "Docker image built successfully."
 
                     docker images travel-price-api:ci
+                '''
+            }
+        }
+
+        stage("Create CI Network") {
+            steps {
+                sh '''
+                    echo "========================================="
+                    echo "Preparing Docker Network"
+                    echo "========================================="
+
+                    docker network inspect jenkins-ci-network > /dev/null 2>&1 || \
+                    docker network create jenkins-ci-network
+
+                    echo "CI network is ready."
                 '''
             }
         }
@@ -143,43 +162,20 @@ pipeline {
             steps {
                 sh '''
                     echo "========================================="
-                    echo "Starting Docker container..."
+                    echo "Starting Docker API Container"
                     echo "========================================="
-
-                    echo "Removing old CI container if present..."
 
                     docker rm -f travel-price-api-ci 2>/dev/null || true
 
-                    echo "Starting container with a RANDOM FREE HOST PORT..."
-
                     docker run -d \
                         --name travel-price-api-ci \
-                        -p 5000 \
+                        --network jenkins-ci-network \
                         travel-price-api:ci
 
-                    echo "Docker container started."
-
                     echo ""
-                    echo "Container status:"
+                    echo "Container started."
+
                     docker ps --filter "name=travel-price-api-ci"
-
-                    echo ""
-                    echo "Getting dynamically assigned host port..."
-
-                    DOCKER_PORT=$(docker port travel-price-api-ci 5000/tcp | head -n 1 | sed -E 's/.*:([0-9]+).*/\\1/')
-
-                    if [ -z "$DOCKER_PORT" ]; then
-                        echo "ERROR: Could not determine Docker host port."
-
-                        docker ps -a --filter "name=travel-price-api-ci"
-                        docker logs travel-price-api-ci || true
-
-                        exit 1
-                    fi
-
-                    echo "Docker API is mapped to host port: $DOCKER_PORT"
-
-                    echo "$DOCKER_PORT" > docker_api_port.txt
 
                     echo ""
                     echo "Waiting for Docker API..."
@@ -188,13 +184,13 @@ pipeline {
 
                     for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
 
-                        if curl -fsS "http://127.0.0.1:${DOCKER_PORT}/health" > /dev/null 2>&1; then
+                        if curl -fsS http://travel-price-api-ci:5000/health > /dev/null 2>&1; then
                             echo "Docker API started successfully!"
                             API_READY=true
                             break
                         fi
 
-                        echo "Waiting... ($i/15)"
+                        echo "Waiting for Docker API... ($i/15)"
                         sleep 2
                     done
 
@@ -203,19 +199,21 @@ pipeline {
 
                         echo ""
                         echo "========== CONTAINER STATUS =========="
+
                         docker ps -a --filter "name=travel-price-api-ci"
 
                         echo ""
                         echo "========== CONTAINER LOGS =========="
+
                         docker logs travel-price-api-ci || true
 
                         exit 1
                     fi
 
                     echo ""
-                    echo "Docker health check:"
+                    echo "Docker API health check:"
 
-                    curl -fsS "http://127.0.0.1:${DOCKER_PORT}/health"
+                    curl -fsS http://travel-price-api-ci:5000/health
 
                     echo ""
                     echo "Docker API is healthy."
@@ -227,23 +225,19 @@ pipeline {
             steps {
                 sh '''
                     echo "========================================="
-                    echo "Testing Docker API..."
+                    echo "Testing Docker API"
                     echo "========================================="
 
-                    DOCKER_PORT=$(cat docker_api_port.txt)
-
-                    echo "Using Docker API port: $DOCKER_PORT"
-
                     echo ""
-                    echo "1. Testing health endpoint..."
+                    echo "1. Health Endpoint"
 
                     curl -fsS \
-                        "http://127.0.0.1:${DOCKER_PORT}/health"
+                        http://travel-price-api-ci:5000/health
 
                     echo ""
                     echo ""
 
-                    echo "2. Testing prediction endpoint..."
+                    echo "2. Prediction Endpoint"
 
                     curl -fsS \
                         -X POST \
@@ -260,12 +254,13 @@ pipeline {
                             "day": 28,
                             "day_of_week": 5
                         }' \
-                        "http://127.0.0.1:${DOCKER_PORT}/predict"
+                        http://travel-price-api-ci:5000/predict
 
                     echo ""
                     echo ""
+
                     echo "========================================="
-                    echo "Docker API tests PASSED!"
+                    echo "DOCKER API TESTS PASSED!"
                     echo "========================================="
                 '''
             }
@@ -277,7 +272,7 @@ pipeline {
         always {
             sh '''
                 echo "========================================="
-                echo "Running cleanup..."
+                echo "Running Cleanup"
                 echo "========================================="
 
                 if [ -f api.pid ]; then
@@ -292,8 +287,6 @@ pipeline {
                 fi
 
                 docker rm -f travel-price-api-ci 2>/dev/null || true
-
-                rm -f docker_api_port.txt
 
                 echo "Cleanup completed."
             '''
@@ -315,12 +308,6 @@ pipeline {
                     echo "========== LOCAL API LOG =========="
                     cat api.log
                     echo "=================================="
-                fi
-
-                if docker ps -a --format '{{.Names}}' | grep -q '^travel-price-api-ci$'; then
-                    echo "========== DOCKER CONTAINER LOG =========="
-                    docker logs travel-price-api-ci || true
-                    echo "=========================================="
                 fi
             '''
         }
