@@ -23,7 +23,6 @@ pipeline {
                     echo "========================================="
 
                     rm -rf .venv
-
                     python3 -m venv .venv
 
                     .venv/bin/python --version
@@ -57,7 +56,6 @@ pipeline {
                     rm -f api.pid api.log
 
                     nohup .venv/bin/python api/app.py > api.log 2>&1 &
-
                     API_PID=$!
                     echo $API_PID > api.pid
 
@@ -79,6 +77,7 @@ pipeline {
                     done
 
                     if [ "$API_READY" != "true" ]; then
+
                         echo "ERROR: Local API failed to start."
 
                         echo "========== LOCAL API LOG =========="
@@ -88,7 +87,8 @@ pipeline {
                         exit 1
                     fi
 
-                    echo "Final Local API health check:"
+                    echo ""
+                    echo "Local API health response:"
                     curl -fsS http://127.0.0.1:5000/health
 
                     echo ""
@@ -168,37 +168,22 @@ pipeline {
 
                     docker run -d \
                         --name ${CONTAINER_NAME} \
-                        -p 127.0.0.1::5000 \
                         ${IMAGE_NAME}:${IMAGE_TAG}
 
                     echo ""
                     echo "Docker container started."
 
-                    echo "Container status:"
+                    echo "========== CONTAINER STATUS =========="
 
                     docker ps \
                         --filter "name=${CONTAINER_NAME}" \
                         --format "table {{.ID}}\\t{{.Status}}\\t{{.Ports}}\\t{{.Names}}"
 
                     echo ""
-                    echo "Getting dynamically assigned host port..."
+                    echo "========== CONTAINER INSPECT =========="
 
-                    DOCKER_PORT=$(docker port ${CONTAINER_NAME} 5000/tcp | head -n 1 | sed -E 's/.*:([0-9]+).*/\\1/')
-
-                    if [ -z "$DOCKER_PORT" ]; then
-                        echo "ERROR: Could not determine Docker host port."
-
-                        docker ps -a \
-                            --filter "name=${CONTAINER_NAME}"
-
-                        docker logs ${CONTAINER_NAME} || true
-
-                        exit 1
-                    fi
-
-                    echo "Docker API mapped to host port: $DOCKER_PORT"
-
-                    echo "$DOCKER_PORT" > docker_api_port.txt
+                    docker inspect ${CONTAINER_NAME} \
+                        --format='Status={{.State.Status}} ExitCode={{.State.ExitCode}}'
 
                     echo ""
                     echo "Waiting for Docker API..."
@@ -207,8 +192,8 @@ pipeline {
 
                     for i in $(seq 1 20); do
 
-                        if curl -fsS \
-                            http://127.0.0.1:${DOCKER_PORT}/health \
+                        if docker exec ${CONTAINER_NAME} \
+                            python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3).read()" \
                             > /dev/null 2>&1; then
 
                             echo "Docker API started successfully!"
@@ -248,8 +233,8 @@ pipeline {
                     echo ""
                     echo "Docker API health response:"
 
-                    curl -fsS \
-                        http://127.0.0.1:${DOCKER_PORT}/health
+                    docker exec ${CONTAINER_NAME} \
+                        python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:5000/health').read().decode())"
 
                     echo ""
                     echo "Docker API is healthy."
@@ -261,25 +246,16 @@ pipeline {
             steps {
                 sh '''
                     echo "========================================="
-                    echo "Testing Docker API"
+                    echo "Testing Docker API Inside Container"
                     echo "========================================="
-
-                    if [ ! -f docker_api_port.txt ]; then
-                        echo "ERROR: docker_api_port.txt not found."
-                        exit 1
-                    fi
-
-                    DOCKER_PORT=$(cat docker_api_port.txt)
-
-                    echo "Using Docker API port: $DOCKER_PORT"
 
                     echo ""
                     echo "-----------------------------------------"
                     echo "Test 1: Health Endpoint"
                     echo "-----------------------------------------"
 
-                    curl -fsS \
-                        http://127.0.0.1:${DOCKER_PORT}/health
+                    docker exec ${CONTAINER_NAME} \
+                        python -c "import urllib.request; response=urllib.request.urlopen('http://127.0.0.1:5000/health'); print(response.read().decode()); assert response.status == 200"
 
                     echo ""
                     echo "Health test passed."
@@ -289,24 +265,49 @@ pipeline {
                     echo "Test 2: Prediction Endpoint"
                     echo "-----------------------------------------"
 
-                    curl -fsS \
-                        -X POST \
-                        -H "Content-Type: application/json" \
-                        -d '{
-                            "from": "Recife (PE)",
-                            "to": "Florianopolis (SC)",
-                            "flightType": "firstClass",
-                            "time": 1.76,
-                            "distance": 676.53,
-                            "agency": "FlyingDrops",
-                            "year": 2026,
-                            "month": 8,
-                            "day": 28,
-                            "day_of_week": 5
-                        }' \
-                        http://127.0.0.1:${DOCKER_PORT}/predict
+                    docker exec ${CONTAINER_NAME} python -c '
+import urllib.request
+import json
+
+data = {
+    "from": "Recife (PE)",
+    "to": "Florianopolis (SC)",
+    "flightType": "firstClass",
+    "time": 1.76,
+    "distance": 676.53,
+    "agency": "FlyingDrops",
+    "year": 2026,
+    "month": 8,
+    "day": 28,
+    "day_of_week": 5
+}
+
+payload = json.dumps(data).encode("utf-8")
+
+request = urllib.request.Request(
+    "http://127.0.0.1:5000/predict",
+    data=payload,
+    headers={"Content-Type": "application/json"},
+    method="POST"
+)
+
+response = urllib.request.urlopen(request)
+
+body = response.read().decode("utf-8")
+
+print(body)
+
+assert response.status == 200
+
+result = json.loads(body)
+
+assert result["status"] == "success"
+assert "predicted_price" in result
+'
 
                     echo ""
+                    echo "Prediction test passed."
+
                     echo ""
                     echo "========================================="
                     echo "Docker API tests passed!"
@@ -336,8 +337,6 @@ pipeline {
                 fi
 
                 docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
-
-                rm -f docker_api_port.txt
 
                 echo "Cleanup completed."
             '''
@@ -369,6 +368,11 @@ pipeline {
 
                 docker ps -a \
                     --filter "name=${CONTAINER_NAME}" || true
+
+                echo ""
+                echo "========== DOCKER LOGS =========="
+
+                docker logs ${CONTAINER_NAME} 2>/dev/null || true
             '''
         }
     }
