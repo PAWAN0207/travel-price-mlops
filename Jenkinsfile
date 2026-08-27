@@ -48,6 +48,7 @@ pipeline {
                         sleep 2
                     done
 
+                    echo "Final API health check..."
                     curl -f http://127.0.0.1:5000/health
                 '''
             }
@@ -65,7 +66,8 @@ pipeline {
             steps {
                 sh '''
                     if [ -f api.pid ]; then
-                        kill $(cat api.pid) || true
+                        kill $(cat api.pid) 2>/dev/null || true
+                        rm -f api.pid
                     fi
                 '''
             }
@@ -75,7 +77,12 @@ pipeline {
             steps {
                 sh '''
                     echo "Building Docker image..."
+
                     docker build -t travel-price-api:ci .
+
+                    echo "Docker image built successfully!"
+
+                    docker images travel-price-api:ci
                 '''
             }
         }
@@ -83,24 +90,50 @@ pipeline {
         stage("Run Docker Container") {
             steps {
                 sh '''
+                    echo "Removing previous CI container if it exists..."
+
                     docker rm -f travel-price-api-ci 2>/dev/null || true
+
+                    echo "Starting Docker container..."
 
                     docker run -d \
                         --name travel-price-api-ci \
                         -p 5003:5000 \
                         travel-price-api:ci
 
+                    echo "Docker container started."
+
                     echo "Waiting for Docker API..."
 
-                    for i in 1 2 3 4 5 6 7 8 9 10; do
+                    API_READY=false
+
+                    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+
                         if curl -s http://127.0.0.1:5003/health > /dev/null; then
                             echo "Docker API started successfully!"
+                            API_READY=true
                             break
                         fi
 
-                        echo "Waiting... ($i/10)"
+                        echo "Waiting... ($i/20)"
                         sleep 2
                     done
+
+                    echo "Checking Docker container status..."
+
+                    docker ps -a \
+                        --filter "name=travel-price-api-ci" \
+                        --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+
+                    if [ "$API_READY" != "true" ]; then
+                        echo "Docker API failed to become ready."
+                        echo "========== DOCKER CONTAINER LOGS =========="
+                        docker logs travel-price-api-ci || true
+                        echo "==========================================="
+                        exit 1
+                    fi
+
+                    echo "Final Docker health check..."
 
                     curl -f http://127.0.0.1:5003/health
                 '''
@@ -110,12 +143,16 @@ pipeline {
         stage("Test Docker API") {
             steps {
                 sh '''
-                    echo "Testing Docker health endpoint..."
+                    echo "========================================="
+                    echo "Testing Docker health endpoint"
+                    echo "========================================="
 
                     curl -f http://127.0.0.1:5003/health
 
                     echo ""
-                    echo "Testing Docker prediction endpoint..."
+                    echo "========================================="
+                    echo "Testing Docker prediction endpoint"
+                    echo "========================================="
 
                     curl -f \
                         -X POST \
@@ -135,7 +172,8 @@ pipeline {
                         http://127.0.0.1:5003/predict
 
                     echo ""
-                    echo "Docker API tests passed!"
+                    echo ""
+                    echo "Docker API tests passed successfully!"
                 '''
             }
         }
@@ -145,26 +183,35 @@ pipeline {
 
         always {
             sh '''
+                echo "Running cleanup..."
+
                 if [ -f api.pid ]; then
-                    kill $(cat api.pid) || true
+                    kill $(cat api.pid) 2>/dev/null || true
+                    rm -f api.pid
                 fi
 
                 docker rm -f travel-price-api-ci 2>/dev/null || true
+
+                echo "Cleanup completed."
             '''
         }
 
         success {
-            echo "CI/CD Pipeline completed successfully!"
+            echo "========================================="
+            echo "CI/CD PIPELINE COMPLETED SUCCESSFULLY!"
+            echo "========================================="
         }
 
         failure {
-            echo "CI/CD Pipeline failed."
+            echo "========================================="
+            echo "CI/CD PIPELINE FAILED."
+            echo "========================================="
 
             sh '''
                 if [ -f api.log ]; then
-                    echo "========== API LOG =========="
+                    echo "========== LOCAL API LOG =========="
                     cat api.log
-                    echo "============================="
+                    echo "==================================="
                 fi
             '''
         }
